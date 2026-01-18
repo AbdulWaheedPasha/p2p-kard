@@ -1,8 +1,3 @@
-<<<<<<< HEAD:django-backend/campaigns/views.py
-from django.shortcuts import render
-
-# Create your views here.
-=======
 from django.shortcuts import get_object_or_404
 
 from drf_spectacular.utils import extend_schema
@@ -83,4 +78,3 @@ class HealthView(APIView):
     @extend_schema(responses=None)
     def get(self, request):
         return Response({"ok": True, "version": "v1"})
->>>>>>> 0185501 (p2p Backend):campaigns/views.py

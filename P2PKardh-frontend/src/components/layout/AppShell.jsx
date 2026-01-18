@@ -1,5 +1,5 @@
 import { Outlet } from "react-router-dom";
-import Topbar from "./Topbar.jsx";
+import Topbar from "./TopBar.jsx";
 
 export default function AppShell() {
   return (
