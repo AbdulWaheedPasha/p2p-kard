@@ -1,7 +1,7 @@
 from django.shortcuts import get_object_or_404
 
 from drf_spectacular.utils import extend_schema
-from rest_framework import permissions
+from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -14,7 +14,7 @@ from .api_serializers import (
     DashboardResponseSerializer,
     HomeResponseSerializer,
 )
-from core.utils import parse_prefixed_id
+from core.utils import parse_prefixed_uuid
 
 
 class HomeView(APIView):
@@ -42,7 +42,9 @@ class CampaignDetailView(APIView):
 
     @extend_schema(responses=CampaignDetailResponseSerializer)
     def get(self, request, campaign_id):
-        campaign_id = parse_prefixed_id("c", campaign_id)
+        campaign_id = parse_prefixed_uuid("c", campaign_id)
+        if campaign_id is None:
+            return Response({"detail": "Invalid campaign id."}, status=status.HTTP_400_BAD_REQUEST)
         campaign = get_object_or_404(Campaign, id=campaign_id)
         serializer = CampaignDetailResponseSerializer({"campaign": campaign})
         return Response(serializer.data)

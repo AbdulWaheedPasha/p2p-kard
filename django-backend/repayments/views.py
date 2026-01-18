@@ -17,7 +17,7 @@ from stripe.error import SignatureVerificationError
 
 from borrow.models import BorrowRequest, BorrowRequestStatus
 from campaigns.models import Campaign, CampaignStatus
-from core.utils import parse_prefixed_id
+from core.utils import parse_prefixed_uuid
 
 from .models import (
     RepaymentPayment,
@@ -167,7 +167,12 @@ class RepaymentsMineView(APIView):
     def get(self, request):
         borrow_request_id = request.query_params.get("borrowRequestId")
         if borrow_request_id:
-            borrow_request_id = parse_prefixed_id("br", borrow_request_id)
+            borrow_request_id = parse_prefixed_uuid("br", borrow_request_id)
+            if borrow_request_id is None:
+                return Response(
+                    {"detail": "Invalid borrow request id."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             borrow_request = get_object_or_404(
                 BorrowRequest, id=borrow_request_id, requester=request.user
             )

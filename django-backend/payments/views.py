@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from stripe.error import SignatureVerificationError
 
 from campaigns.models import Campaign, CampaignStatus
-from core.utils import parse_prefixed_id
+from core.utils import parse_prefixed_uuid
 
 from .models import Contribution, ContributionStatus, PaymentProvider
 from .serializers import SupportCheckoutRequestSerializer, SupportCheckoutResponseSerializer
@@ -26,7 +26,9 @@ class SupportCheckoutView(APIView):
 
     @extend_schema(request=SupportCheckoutRequestSerializer, responses=SupportCheckoutResponseSerializer)
     def post(self, request, campaign_id):
-        campaign_id = parse_prefixed_id("c", campaign_id)
+        campaign_id = parse_prefixed_uuid("c", campaign_id)
+        if campaign_id is None:
+            return Response({"detail": "Invalid campaign id."}, status=status.HTTP_400_BAD_REQUEST)
         campaign = get_object_or_404(Campaign, id=campaign_id)
         serializer = SupportCheckoutRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

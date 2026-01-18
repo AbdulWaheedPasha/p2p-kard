@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from borrow.models import BorrowRequest, BorrowRequestStatus
-from core.utils import parse_prefixed_id
+from core.utils import parse_prefixed_uuid
 from borrow.serializers import (
     AdminBorrowRequestDetailSerializer,
     AdminBorrowRequestListSerializer,
@@ -34,7 +34,9 @@ class AdminBorrowRequestDetailView(APIView):
 
     @extend_schema(responses=AdminBorrowRequestDetailSerializer)
     def get(self, request, borrow_request_id):
-        borrow_request_id = parse_prefixed_id("br", borrow_request_id)
+        borrow_request_id = parse_prefixed_uuid("br", borrow_request_id)
+        if borrow_request_id is None:
+            return Response({"detail": "Invalid borrow request id."}, status=status.HTTP_400_BAD_REQUEST)
         borrow_request = get_object_or_404(BorrowRequest, id=borrow_request_id)
         serializer = AdminBorrowRequestDetailSerializer(borrow_request)
         return Response(serializer.data)
@@ -45,7 +47,9 @@ class AdminBorrowRequestDecisionView(APIView):
 
     @extend_schema(request=DecisionSerializer, responses=None)
     def post(self, request, borrow_request_id):
-        borrow_request_id = parse_prefixed_id("br", borrow_request_id)
+        borrow_request_id = parse_prefixed_uuid("br", borrow_request_id)
+        if borrow_request_id is None:
+            return Response({"detail": "Invalid borrow request id."}, status=status.HTTP_400_BAD_REQUEST)
         borrow_request = get_object_or_404(BorrowRequest, id=borrow_request_id)
         serializer = DecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -68,7 +72,9 @@ class AdminCreateCampaignView(APIView):
 
     @extend_schema(request=CreateCampaignSerializer, responses=CreateCampaignSerializer)
     def post(self, request, borrow_request_id):
-        borrow_request_id = parse_prefixed_id("br", borrow_request_id)
+        borrow_request_id = parse_prefixed_uuid("br", borrow_request_id)
+        if borrow_request_id is None:
+            return Response({"detail": "Invalid borrow request id."}, status=status.HTTP_400_BAD_REQUEST)
         borrow_request = get_object_or_404(BorrowRequest, id=borrow_request_id)
         if borrow_request.status != BorrowRequestStatus.VERIFIED:
             return Response(

@@ -37,6 +37,7 @@ export default function CampaignDetails() {
 
   const needed = Number(campaign.amount_needed_cents ?? 0);
   const pooled = Number(campaign.amount_pooled_cents ?? 0);
+  const campaignId = campaign.campaign_id ?? campaign.id ?? campaign.uuid ?? campaign.campaign_uuid;
 
   return (
     <Page>
@@ -50,7 +51,7 @@ export default function CampaignDetails() {
                 Expected return: ~{campaign.expected_return_days} days{" "}
                 {campaign.expected_return_date ? `(by ${campaign.expected_return_date})` : ""}
               </div>
-              <Button onClick={() => navigate(`/app/campaigns/${campaign.id}/support`)}>
+              <Button onClick={() => navigate(`/app/campaigns/${campaignId}/support`)}>
                 Support this campaign
               </Button>
             </div>

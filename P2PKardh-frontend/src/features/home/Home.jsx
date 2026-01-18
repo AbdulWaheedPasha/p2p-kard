@@ -3,16 +3,32 @@ import { useNavigate } from "react-router-dom";
 import Card from "../../components/ui/Card.jsx";
 import Button from "../../components/ui/Button.jsx";
 import { Page } from "../../components/ui/Motion.jsx";
+import { homeApi } from "../../api/endpoints.js";
 
-const demoCampaigns = [
-  { id: "201", title: "Urgent medical support", category: "Medical", amountNeeded: 1200, pooled: 780, expectedReturnDays: 90, status: "running", verified: true },
-  { id: "202", title: "Education fees support", category: "Education", amountNeeded: 800, pooled: 420, expectedReturnDays: 120, status: "running", verified: true },
-  { id: "203", title: "Temporary rent support", category: "Housing", amountNeeded: 1500, pooled: 1200, expectedReturnDays: 150, status: "running", verified: true },
-  { id: "204", title: "Work tools support", category: "Employment", amountNeeded: 600, pooled: 310, expectedReturnDays: 75, status: "running", verified: true },
-  { id: "205", title: "Family travel for emergency", category: "Emergency", amountNeeded: 900, pooled: 900, expectedReturnDays: 110, status: "completed", verified: true },
-  { id: "206", title: "Monthly essentials support", category: "Essentials", amountNeeded: 500, pooled: 500, expectedReturnDays: 60, status: "completed", verified: true },
-  { id: "207", title: "Medical follow-up support", category: "Medical", amountNeeded: 700, pooled: 700, expectedReturnDays: 80, status: "completed", verified: true },
-];
+function normalizeCampaign(c) {
+  const id = c?.campaign_id ?? c?.id ?? c?.uuid ?? c?.campaign_uuid;
+  const hasNeededCents = c?.amount_needed_cents != null;
+  const hasPooledCents = c?.amount_pooled_cents != null;
+  const amountNeeded = hasNeededCents
+    ? Math.round(Number(c.amount_needed_cents) / 100)
+    : Number(c?.amount_needed ?? c?.amountNeeded ?? 0);
+  const pooled = hasPooledCents
+    ? Math.round(Number(c.amount_pooled_cents) / 100)
+    : Number(c?.amount_pooled ?? c?.pooled ?? 0);
+  const rawStatus = c?.status ?? "running";
+  const status = typeof rawStatus === "string" ? rawStatus.toLowerCase() : "running";
+
+  return {
+    id,
+    title: c?.title_public ?? c?.title ?? "Campaign",
+    category: c?.category ?? "Other",
+    amountNeeded,
+    pooled,
+    expectedReturnDays: c?.expected_return_days ?? c?.expectedReturnDays ?? 0,
+    status,
+    verified: c?.verified ?? c?.is_verified ?? false,
+  };
+}
 
 function ProgressBar({ value = 0 }) {
   return (
@@ -81,11 +97,38 @@ function CampaignCard({ c, onOpen, onSupport }) {
 
 export default function Home() {
   const navigate = useNavigate();
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState("");
+  const [running, setRunning] = React.useState([]);
+  const [completed, setCompleted] = React.useState([]);
 
-  // BACKEND DEPENDENCY: replace demoCampaigns with API fetch
-  // const { running, completed } = await api.getCampaignsHome();
-  const running = demoCampaigns.filter((c) => c.status === "running");
-  const completed = demoCampaigns.filter((c) => c.status === "completed");
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const res = await homeApi();
+        if (!alive) return;
+        const runningCampaigns = Array.isArray(res?.running_campaigns)
+          ? res.running_campaigns.map(normalizeCampaign).filter((c) => c.id)
+          : [];
+        const completedCampaigns = Array.isArray(res?.completed_campaigns)
+          ? res.completed_campaigns.map(normalizeCampaign).filter((c) => c.id)
+          : [];
+        setRunning(runningCampaigns);
+        setCompleted(completedCampaigns);
+      } catch (e) {
+        if (!alive) return;
+        setError("Sorry â€” we couldnâ€™t load campaigns right now.");
+        setRunning([]);
+        setCompleted([]);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   return (
     <Page>
@@ -97,19 +140,27 @@ export default function Home() {
           </div>
         </div>
 
+        {error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+        )}
+
         <Card
           title="Currently running"
           subtitle="These requests are active. Your support helps complete the pool."
         >
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 items-stretch">
-            {running.map((c) => (
-              <CampaignCard
-                key={c.id}
-                c={c}
-                onOpen={() => navigate(`/app/campaigns/${c.id}`)}
-                onSupport={() => navigate(`/app/campaigns/${c.id}/support`)}
-              />
-            ))}
+            {loading ? (
+              <div className="text-slate-600">Loadingâ€¦</div>
+            ) : (
+              running.map((c) => (
+                <CampaignCard
+                  key={c.id}
+                  c={c}
+                  onOpen={() => navigate(`/app/campaigns/${c.id}`)}
+                  onSupport={() => navigate(`/app/campaigns/${c.id}/support`)}
+                />
+              ))
+            )}
           </div>
         </Card>
 
@@ -118,14 +169,18 @@ export default function Home() {
           subtitle="Thank you. These campaigns reached their goal."
         >
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 items-stretch">
-            {completed.map((c) => (
-              <CampaignCard
-                key={c.id}
-                c={c}
-                onOpen={() => navigate(`/app/campaigns/${c.id}`)}
-                onSupport={() => navigate(`/app/campaigns/${c.id}/support`)}
-              />
-            ))}
+            {loading ? (
+              <div className="text-slate-600">Loadingâ€¦</div>
+            ) : (
+              completed.map((c) => (
+                <CampaignCard
+                  key={c.id}
+                  c={c}
+                  onOpen={() => navigate(`/app/campaigns/${c.id}`)}
+                  onSupport={() => navigate(`/app/campaigns/${c.id}/support`)}
+                />
+              ))
+            )}
           </div>
         </Card>
       </div>

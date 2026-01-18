@@ -9,7 +9,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.utils import parse_prefixed_id, prefixed_id
+from core.utils import parse_prefixed_uuid, prefixed_id
 
 from .models import BorrowDocument, BorrowDocumentStatus, BorrowRequest
 from .serializers import (
@@ -43,7 +43,9 @@ class BorrowRequestPresignView(APIView):
 
     @extend_schema(request=PresignRequestSerializer, responses=PresignResponseSerializer)
     def post(self, request, borrow_request_id):
-        borrow_request_id = parse_prefixed_id("br", borrow_request_id)
+        borrow_request_id = parse_prefixed_uuid("br", borrow_request_id)
+        if borrow_request_id is None:
+            return Response({"detail": "Invalid borrow request id."}, status=status.HTTP_400_BAD_REQUEST)
         borrow_request = get_object_or_404(
             BorrowRequest, id=borrow_request_id, requester=request.user
         )
@@ -115,7 +117,9 @@ class BorrowRequestConfirmDocumentsView(APIView):
 
     @extend_schema(request=ConfirmDocumentsSerializer, responses=ConfirmDocumentsResponseSerializer)
     def post(self, request, borrow_request_id):
-        borrow_request_id = parse_prefixed_id("br", borrow_request_id)
+        borrow_request_id = parse_prefixed_uuid("br", borrow_request_id)
+        if borrow_request_id is None:
+            return Response({"detail": "Invalid borrow request id."}, status=status.HTTP_400_BAD_REQUEST)
         borrow_request = get_object_or_404(
             BorrowRequest, id=borrow_request_id, requester=request.user
         )
