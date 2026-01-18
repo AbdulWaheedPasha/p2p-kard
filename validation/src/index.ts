@@ -4,16 +4,16 @@ import { ValidationEngine } from './engine/index.js';
 import type { ValidationRequest } from './types/index.js';
 import { ValidationConfig } from './config/validation.config.js';
 import { TrueLayerAdapter } from './providers/openbanking/index.js';
-
-// TrueLayer config
-const TRUELAYER_CLIENT_ID = process.env.TRUELAYER_CLIENT_ID;
-const TRUELAYER_CLIENT_SECRET = process.env.TRUELAYER_CLIENT_SECRET;
-const TRUELAYER_REDIRECT_URI = 'http://localhost:3001/callback';
+import { userStateManager } from './state/UserStateManager.js';
+import { trueLayerProvider } from './providers/truelayer/TrueLayerProvider.js';
+import { diditProvider } from './providers/idv/DiditProvider.js';
+import { ofacProvider } from './providers/sanctions/OfacProvider.js';
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // Initialize providers and validation engine
 const trueLayerAdapter = new TrueLayerAdapter();
@@ -21,192 +21,183 @@ const validationEngine = new ValidationEngine({
   openBankingProvider: trueLayerAdapter,
 });
 
-// Health check
+// ============================================
+// Health & Status Endpoints
+// ============================================
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: ValidationConfig.modelVersion });
 });
 
-// TrueLayer OAuth callback - receives auth code and exchanges for access token
-app.get('/callback', async (req, res) => {
-  const { code, state, error } = req.query;
+// Get user verification status
+app.get('/api/v1/users/:userId/status', (req, res) => {
+  const state = userStateManager.get(req.params.userId);
+  res.json({
+    userId: state.userId,
+    bankStatus: state.bankStatus,
+    idvStatus: state.idvStatus,
+    sanctionsChecked: state.sanctionsChecked,
+    sanctionsClear: state.sanctionsClear,
+    updatedAt: state.updatedAt,
+  });
+});
 
-  if (error) {
-    console.error('[CALLBACK] TrueLayer error:', error);
-    return res.status(400).json({ error: error });
+// ============================================
+// Bank Linking (TrueLayer)
+// ============================================
+
+// Generate auth URL for bank linking
+app.post('/api/v1/bank/auth-url', (req, res) => {
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
   }
 
-  if (!code) {
-    return res.status(400).json({ error: 'No authorization code received' });
-  }
+  const authUrl = trueLayerProvider.generateAuthUrl(userId);
+  console.log(`[BANK] Generated auth URL for user ${userId}`);
 
-  console.log(`[CALLBACK] Received auth code: ${(code as string).slice(0, 20)}...`);
-  console.log(`[CALLBACK] State: ${state}`);
+  res.json({ authUrl });
+});
 
+// TrueLayer OAuth callback
+app.get('/api/v1/bank/callback', async (req, res) => {
   try {
-    // Exchange code for access token
-    const tokenResponse = await fetch('https://auth.truelayer-sandbox.com/connect/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: TRUELAYER_CLIENT_ID!,
-        client_secret: TRUELAYER_CLIENT_SECRET!,
-        redirect_uri: TRUELAYER_REDIRECT_URI,
-        code: code as string,
-      }).toString(),
+    const { code, state, error } = req.query;
+
+    if (error) {
+      console.error(`[BANK] OAuth error: ${error}`);
+      return res.redirect(`${FRONTEND_URL}/bank-link?error=${error}`);
+    }
+
+    if (!code || !state) {
+      return res.redirect(`${FRONTEND_URL}/bank-link?error=missing_params`);
+    }
+
+    // Find user by state
+    const userState = userStateManager.findByBankSessionState(state as string);
+    if (!userState) {
+      console.error(`[BANK] Invalid state: ${state}`);
+      return res.redirect(`${FRONTEND_URL}/bank-link?error=invalid_state`);
+    }
+
+    console.log(`[BANK] Callback received for user ${userState.userId}`);
+
+    // Exchange code for tokens
+    const tokens = await trueLayerProvider.exchangeCode(code as string);
+
+    // Update user state
+    userStateManager.update(userState.userId, {
+      bankStatus: 'connected',
+      bankAccessToken: tokens.accessToken,
+      bankRefreshToken: tokens.refreshToken,
+      bankTokenExpiresAt: tokens.expiresAt,
+      bankSessionState: undefined,
     });
 
-    const tokenData = await tokenResponse.json();
+    console.log(`[BANK] User ${userState.userId} bank linked successfully`);
 
-    if (!tokenResponse.ok) {
-      console.error('[CALLBACK] Token exchange failed:', tokenData);
-      return res.status(400).json({ error: 'Token exchange failed', details: tokenData });
-    }
-
-    console.log('[CALLBACK] Token exchange successful!');
-    console.log(`[CALLBACK] Access token: ${tokenData.access_token?.slice(0, 30)}...`);
-
-    // Fetch bank data using the token
-    console.log('[CALLBACK] Fetching bank data...');
-    const bankData = await trueLayerAdapter.fetchBankData(tokenData.access_token);
-    console.log(`[CALLBACK] Fetched ${bankData.accounts.length} accounts, ${bankData.transactions.length} transactions`);
-
-    // Calculate some summary stats
-    const totalBalance = bankData.accounts.reduce((sum, acc) => sum + acc.balance, 0);
-    const incomeTransactions = bankData.transactions.filter(t => t.amount > 0);
-    const expenseTransactions = bankData.transactions.filter(t => t.amount < 0);
-    const totalIncome = incomeTransactions.reduce((sum, t) => sum + t.amount, 0);
-    const totalExpenses = Math.abs(expenseTransactions.reduce((sum, t) => sum + t.amount, 0));
-
-    // Return success page with bank data
-    res.send(`
-      <html>
-        <head>
-          <title>TrueLayer Connected</title>
-          <style>
-            body { font-family: sans-serif; padding: 40px; max-width: 900px; margin: 0 auto; }
-            h1 { color: #2e7d32; }
-            .card { background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; }
-            .stat { display: inline-block; margin-right: 30px; }
-            .stat-value { font-size: 24px; font-weight: bold; color: #1976d2; }
-            .stat-label { color: #666; font-size: 12px; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-            th { background: #e3f2fd; }
-            .income { color: #2e7d32; }
-            .expense { color: #c62828; }
-            .token-box { background: #fff3e0; padding: 10px; border-radius: 4px; word-break: break-all; font-family: monospace; font-size: 12px; }
-          </style>
-        </head>
-        <body>
-          <h1>Bank Connected Successfully!</h1>
-
-          <div class="card">
-            <h3>Summary</h3>
-            <div class="stat">
-              <div class="stat-value">${bankData.accounts.length}</div>
-              <div class="stat-label">Accounts</div>
-            </div>
-            <div class="stat">
-              <div class="stat-value">&pound;${(totalBalance / 100).toFixed(2)}</div>
-              <div class="stat-label">Total Balance</div>
-            </div>
-            <div class="stat">
-              <div class="stat-value">${bankData.transactions.length}</div>
-              <div class="stat-label">Transactions</div>
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>Accounts</h3>
-            <table>
-              <tr><th>Name</th><th>Type</th><th>Balance</th></tr>
-              ${bankData.accounts.map(acc => `
-                <tr>
-                  <td>${acc.name}</td>
-                  <td>${acc.type}</td>
-                  <td>&pound;${(acc.balance / 100).toFixed(2)}</td>
-                </tr>
-              `).join('')}
-            </table>
-          </div>
-
-          <div class="card">
-            <h3>Transaction Analysis</h3>
-            <div class="stat">
-              <div class="stat-value income">&pound;${(totalIncome / 100).toFixed(2)}</div>
-              <div class="stat-label">Total Income</div>
-            </div>
-            <div class="stat">
-              <div class="stat-value expense">&pound;${(totalExpenses / 100).toFixed(2)}</div>
-              <div class="stat-label">Total Expenses</div>
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>Recent Transactions (last 10)</h3>
-            <table>
-              <tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr>
-              ${bankData.transactions.slice(0, 10).map(tx => `
-                <tr>
-                  <td>${tx.date.substring(0, 10)}</td>
-                  <td>${tx.description.substring(0, 40)}</td>
-                  <td>${tx.category || 'other'}</td>
-                  <td class="${tx.amount > 0 ? 'income' : 'expense'}">
-                    ${tx.amount > 0 ? '+' : ''}&pound;${(tx.amount / 100).toFixed(2)}
-                  </td>
-                </tr>
-              `).join('')}
-            </table>
-          </div>
-
-          <div class="card">
-            <h3>Access Token (for testing)</h3>
-            <div class="token-box">${tokenData.access_token}</div>
-            <p style="margin-top: 10px; color: #666; font-size: 12px;">
-              Expires in: ${tokenData.expires_in} seconds |
-              Refresh token: ${tokenData.refresh_token ? 'Yes' : 'No'}
-            </p>
-          </div>
-
-          <div class="card" style="background: #e8f5e9;">
-            <h3>Next: Test Validation</h3>
-            <p>Use this curl command to test validation with this bank data:</p>
-            <pre style="background: #333; color: #fff; padding: 15px; border-radius: 4px; overflow-x: auto;">
-curl -X POST http://localhost:${PORT}/api/v1/validate \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "advanceId": "test-001",
-    "userId": "user-001",
-    "amount": 50000,
-    "currency": "GBP",
-    "termMonths": 6,
-    "purposeCategory": "rent",
-    "payoutMethod": "bank_transfer",
-    "user": {
-      "emailVerified": true,
-      "hasActiveAdvance": false,
-      "accountAgeDays": 45
-    },
-    "evidence": {
-      "documents": [{"type": "payslip", "uploadedAt": "2024-01-15"}],
-      "bankLinkStatus": "connected",
-      "bankLinkToken": "${tokenData.access_token}",
-      "idvStatus": "verified"
-    }
-  }'
-            </pre>
-          </div>
-        </body>
-      </html>
-    `);
+    res.redirect(`${FRONTEND_URL}/bank-link?success=true`);
   } catch (err) {
-    console.error('[CALLBACK] Error:', err);
-    res.status(500).json({ error: 'Failed to exchange token', message: (err as Error).message });
+    console.error('[BANK] Callback error:', err);
+    res.redirect(`${FRONTEND_URL}/bank-link?error=exchange_failed`);
   }
 });
+
+// Get bank data for a user (uses stored token)
+app.get('/api/v1/bank/:userId/data', async (req, res) => {
+  try {
+    const state = userStateManager.get(req.params.userId);
+
+    if (state.bankStatus !== 'connected' || !state.bankAccessToken) {
+      return res.status(400).json({ error: 'Bank not connected' });
+    }
+
+    const bankData = await trueLayerProvider.fetchBankData(state.bankAccessToken);
+    res.json(bankData);
+  } catch (err) {
+    console.error('[BANK] Error fetching bank data:', err);
+    res.status(500).json({ error: 'Failed to fetch bank data' });
+  }
+});
+
+// ============================================
+// Identity Verification (Didit)
+// ============================================
+
+// Create IDV session
+app.post('/api/v1/idv/session', async (req, res) => {
+  try {
+    const { userId, callbackUrl } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+
+    const session = await diditProvider.createSession(userId, callbackUrl);
+    res.json(session);
+  } catch (err) {
+    console.error('[IDV] Error creating session:', err);
+    res.status(500).json({ error: 'Failed to create IDV session', message: (err as Error).message });
+  }
+});
+
+// Get IDV session status
+app.get('/api/v1/idv/session/:sessionId', async (req, res) => {
+  try {
+    const result = await diditProvider.getSessionResult(req.params.sessionId);
+    res.json(result);
+  } catch (err) {
+    console.error('[IDV] Error getting session result:', err);
+    res.status(500).json({ error: 'Failed to get IDV result' });
+  }
+});
+
+// Didit webhook
+app.post('/api/v1/webhooks/didit', (req, res) => {
+  try {
+    console.log('[IDV] Webhook received:', JSON.stringify(req.body).slice(0, 200));
+    diditProvider.handleWebhook(req.body);
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('[IDV] Webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+
+// ============================================
+// Sanctions Screening (OFAC)
+// ============================================
+
+// Check sanctions
+app.post('/api/v1/sanctions/check', async (req, res) => {
+  try {
+    const { fullName, userId } = req.body;
+
+    if (!fullName) {
+      return res.status(400).json({ error: 'fullName is required' });
+    }
+
+    const result = await ofacProvider.quickCheck(fullName);
+
+    // Update user state if userId provided
+    if (userId) {
+      userStateManager.update(userId, {
+        sanctionsChecked: true,
+        sanctionsClear: result.clear,
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('[SANCTIONS] Error:', err);
+    res.status(500).json({ error: 'Sanctions check failed', message: (err as Error).message });
+  }
+});
+
+// ============================================
+// Validation Endpoints
+// ============================================
 
 // Main validation endpoint
 app.post('/api/v1/validate', async (req, res) => {
@@ -214,6 +205,15 @@ app.post('/api/v1/validate', async (req, res) => {
     const request = req.body as ValidationRequest;
 
     console.log(`[VALIDATE] advanceId=${request.advanceId} userId=${request.userId} amount=${request.amount}`);
+
+    // If userId is provided and has stored bank token, use it
+    if (request.userId && !request.evidence.bankLinkToken) {
+      const state = userStateManager.get(request.userId);
+      if (state.bankStatus === 'connected' && state.bankAccessToken) {
+        request.evidence.bankLinkToken = state.bankAccessToken;
+        request.evidence.bankLinkStatus = 'connected';
+      }
+    }
 
     const result = await validationEngine.validate(request);
 
@@ -232,12 +232,23 @@ app.post('/api/v1/validate', async (req, res) => {
 // Quick eligibility check
 app.post('/api/v1/check-eligibility', async (req, res) => {
   try {
-    const { amount, termMonths, bankLinkToken } = req.body;
+    const { userId, amount, termMonths } = req.body;
 
-    // Create a minimal request for eligibility check
+    // Get user's bank token if available
+    let bankLinkToken: string | undefined;
+    let bankLinkStatus: 'connected' | 'not_linked' = 'not_linked';
+
+    if (userId) {
+      const state = userStateManager.get(userId);
+      if (state.bankStatus === 'connected' && state.bankAccessToken) {
+        bankLinkToken = state.bankAccessToken;
+        bankLinkStatus = 'connected';
+      }
+    }
+
     const request: ValidationRequest = {
       advanceId: 'eligibility-check',
-      userId: 'eligibility-check',
+      userId: userId || 'eligibility-check',
       amount: amount || 0,
       currency: 'GBP',
       termMonths: termMonths || 6,
@@ -250,7 +261,7 @@ app.post('/api/v1/check-eligibility', async (req, res) => {
       },
       evidence: {
         documents: [],
-        bankLinkStatus: bankLinkToken ? 'connected' : 'not_linked',
+        bankLinkStatus,
         bankLinkToken,
         idvStatus: 'verified',
       },
@@ -273,11 +284,13 @@ app.post('/api/v1/check-eligibility', async (req, res) => {
   }
 });
 
-// Admin approve
+// ============================================
+// Admin Endpoints
+// ============================================
+
 app.post('/api/v1/admin/approve', (req, res) => {
   const { advanceId, reviewerId, notes } = req.body;
 
-  // Admin approval bypasses automated checks
   res.json({
     decision: 'PASS',
     newStatus: 'Approved',
@@ -300,7 +313,6 @@ app.post('/api/v1/admin/approve', (req, res) => {
   });
 });
 
-// Admin reject
 app.post('/api/v1/admin/reject', (req, res) => {
   const { advanceId, reviewerId, reason } = req.body;
 
@@ -326,9 +338,36 @@ app.post('/api/v1/admin/reject', (req, res) => {
   });
 });
 
+// Debug endpoint - get all user states (development only)
+if (process.env.NODE_ENV === 'development') {
+  app.get('/api/v1/debug/states', (req, res) => {
+    res.json(userStateManager.getAll());
+  });
+}
+
+// ============================================
+// Legacy callback (for testing)
+// ============================================
+
+app.get('/callback', async (req, res) => {
+  // Redirect to new callback path
+  const queryString = new URLSearchParams(req.query as Record<string, string>).toString();
+  res.redirect(`/api/v1/bank/callback?${queryString}`);
+});
+
+// ============================================
+// Start Server
+// ============================================
+
 app.listen(PORT, () => {
-  console.log(`Validation service running on port ${PORT}`);
+  console.log(`\nValidation service running on port ${PORT}`);
   console.log(`Version: ${ValidationConfig.modelVersion}`);
-  console.log(`Health: http://localhost:${PORT}/health`);
-  console.log(`Validate: POST http://localhost:${PORT}/api/v1/validate`);
+  console.log(`\nEndpoints:`);
+  console.log(`  Health:     GET  http://localhost:${PORT}/health`);
+  console.log(`  User Status: GET  http://localhost:${PORT}/api/v1/users/:userId/status`);
+  console.log(`  Bank Auth:  POST http://localhost:${PORT}/api/v1/bank/auth-url`);
+  console.log(`  IDV Session: POST http://localhost:${PORT}/api/v1/idv/session`);
+  console.log(`  Sanctions:  POST http://localhost:${PORT}/api/v1/sanctions/check`);
+  console.log(`  Validate:   POST http://localhost:${PORT}/api/v1/validate`);
+  console.log('');
 });

@@ -1,6 +1,9 @@
 // Validation engine output types
 
-import type { AdvanceStatus } from './advance.types.js';
+import type { AdvanceStatus, RiskAssessment } from './advance.types.js';
+
+// Re-export RiskAssessment for convenience
+export type { RiskAssessment };
 
 // Decision outcomes
 export type Decision =
@@ -70,13 +73,6 @@ export type AffordabilityFlag =
   | 'LOW_BUFFER'
   | 'HIGH_DEBT_RATIO'
   | 'INSUFFICIENT_HISTORY';
-
-// Risk assessment
-export interface RiskAssessment {
-  score: number;
-  reasons: string[];
-  modelVersion: string;
-}
 
 // Final validation result returned to Django
 export interface ValidationResult {

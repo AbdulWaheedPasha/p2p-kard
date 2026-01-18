@@ -42,7 +42,7 @@ export class TrueLayerAdapter implements IOpenBankingProvider {
       throw new Error(`Failed to fetch accounts: ${response.status} - ${error}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as { results: any[] };
 
     return data.results.map((acc: any) => ({
       accountId: acc.account_id,
@@ -75,7 +75,7 @@ export class TrueLayerAdapter implements IOpenBankingProvider {
         );
 
         if (balanceResponse.ok) {
-          const balanceData = await balanceResponse.json();
+          const balanceData = await balanceResponse.json() as { results?: { current: number; available?: number }[] };
           if (balanceData.results?.[0]) {
             account.balance = Math.round(balanceData.results[0].current * 100); // Convert to pence
             account.availableBalance = Math.round(
@@ -93,7 +93,7 @@ export class TrueLayerAdapter implements IOpenBankingProvider {
         );
 
         if (txResponse.ok) {
-          const txData = await txResponse.json();
+          const txData = await txResponse.json() as { results?: any[] };
 
           for (const tx of txData.results || []) {
             allTransactions.push({
