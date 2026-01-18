@@ -45,7 +45,7 @@ Version: 1.0 | Date: 2026-01-17
 | Column | Type | Notes |
 |--------|------|-------|
 | id | UUID | Primary key |
-| user_id | UUID | FK → users |
+| user_id | UUID | FK → users (the borrower) |
 | amount | INTEGER | In minor units (pence/cents) |
 | currency | VARCHAR(3) | 'GBP', 'EUR', 'USD' |
 | term_months | INTEGER | 1-24 |
@@ -56,12 +56,21 @@ Version: 1.0 | Date: 2026-01-17
 | risk_score | INTEGER | 0-100, from validation service |
 | risk_reasons | JSONB | Array of reason codes |
 | risk_model_version | VARCHAR(20) | e.g., '1.0.0' |
+| **funding_status** | VARCHAR(20) | 'seeking', 'partially_funded', 'fully_funded', 'disbursed' |
+| **amount_pledged** | INTEGER | Sum of all supporter pledges (pence) |
+| **amount_confirmed** | INTEGER | Sum of confirmed/transferred pledges (pence) |
+| **funded_at** | TIMESTAMP | When fully funded |
 | created_at | TIMESTAMP | |
 | updated_at | TIMESTAMP | |
 
-**Status Enum:**
+**Status Enum (validation flow):**
 ```
 Draft → PendingChecks → NeedsAction → ManualReview → Approved → Funded → Repaid/Closed/Defaulted
+```
+
+**Funding Status Enum (P2P flow):**
+```
+seeking → partially_funded → fully_funded → disbursed
 ```
 
 #### `advance_documents`
@@ -105,39 +114,243 @@ Draft → PendingChecks → NeedsAction → ManualReview → Approved → Funded
 | external_id | VARCHAR(255) | Provider's reference |
 | completed_at | TIMESTAMP | |
 
+#### `advance_supports` (P2P Funding - Multiple Supporters per Advance)
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | Primary key |
+| advance_id | UUID | FK → advances |
+| supporter_id | UUID | FK → users (the person giving qard hasan) |
+| amount | INTEGER | Contribution amount in pence/cents |
+| status | VARCHAR(20) | 'pledged', 'confirmed', 'transferred', 'repaid', 'cancelled' |
+| pledged_at | TIMESTAMP | When supporter committed |
+| confirmed_at | TIMESTAMP | When funds confirmed in escrow/holding |
+| transferred_at | TIMESTAMP | When funds sent to borrower |
+| repaid_at | TIMESTAMP | When borrower repaid this portion |
+
+**Support Status Flow:**
+```
+pledged → confirmed → transferred → repaid
+    ↓
+ cancelled (supporter can cancel before confirmed)
+```
+
+**Example: £600 Advance with Multiple Supporters**
+```
+Advance ID: adv_123 (borrower needs £600 for rent)
+├── Support 1: Supporter A pledges £200 (status: confirmed)
+├── Support 2: Supporter B pledges £250 (status: pledged)
+└── Support 3: Supporter C pledges £150 (status: pledged)
+    ────────────────────────────────────────────────────
+    Total pledged: £600 | Confirmed: £200 | Remaining: £400
+```
+
+#### `repayments` (Tracking Borrower Repayments)
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | Primary key |
+| advance_id | UUID | FK → advances |
+| amount | INTEGER | Repayment amount in pence |
+| due_date | DATE | Expected payment date |
+| paid_at | TIMESTAMP | Actual payment timestamp (null if unpaid) |
+| status | VARCHAR(20) | 'upcoming', 'paid', 'late', 'missed' |
+
+#### `repayment_distributions` (Splitting Repayments to Supporters)
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | Primary key |
+| repayment_id | UUID | FK → repayments |
+| support_id | UUID | FK → advance_supports |
+| amount | INTEGER | Portion going to this supporter (pence) |
+| transferred_at | TIMESTAMP | When sent to supporter |
+
+---
+
+## P2P Funding Flow
+
+```
+1. BORROWER APPLIES
+   └── Borrower requests £600 advance for rent
+   └── Validation service approves → status: 'Approved', funding_status: 'seeking'
+
+2. SUPPORTERS BROWSE & PLEDGE
+   └── Advance appears in "seeking funding" list
+   └── Supporter A pledges £200 → funding_status: 'partially_funded'
+   └── Supporter B pledges £250
+   └── Supporter C pledges £150 → amount_pledged = £600
+
+3. FUNDS CONFIRMED
+   └── Supporters transfer to platform escrow
+   └── When amount_confirmed >= amount → funding_status: 'fully_funded'
+
+4. DISBURSEMENT
+   └── Platform sends £600 to borrower
+   └── status: 'Funded', funding_status: 'disbursed'
+
+5. REPAYMENTS (Monthly)
+   └── Borrower pays £100/month (6 month term)
+   └── Platform distributes proportionally:
+       ├── Supporter A: £33.33 (200/600 = 33.3%)
+       ├── Supporter B: £41.67 (250/600 = 41.7%)
+       └── Supporter C: £25.00 (150/600 = 25.0%)
+
+6. COMPLETION
+   └── After 6 payments, all supporters repaid
+   └── status: 'Repaid', all support statuses: 'repaid'
+```
+
 ---
 
 ## 2. Django Backend API Requirements
 
-### User-Facing Endpoints (FE consumes these)
+### User Roles
+
+| Role | Description |
+|------|-------------|
+| **Supporter** | Donates to loan requests, tracks donations, receives repayments. Can also be a borrower. |
+| **Applicant** | Requests loans, receives funds, repays the loan. |
+| **Admin** | Verifies users, approves/rejects loans, releases funds, manages platform. |
+
+*Note: A single user can be both Supporter and Applicant (same account).*
+
+---
+
+### Common Endpoints (All Users)
 
 ```
-POST   /api/auth/register
-POST   /api/auth/login
-POST   /api/auth/verify-otp
+# Authentication
+POST   /api/auth/register              → Common registration form
+POST   /api/auth/login                 → Request email OTP
+POST   /api/auth/verify-otp            → Verify OTP, receive token
 
-GET    /api/users/me
-GET    /api/users/me/bank-link-status
-POST   /api/users/me/initiate-bank-link      → Returns redirect URL for Open Banking
-POST   /api/users/me/initiate-idv            → Returns redirect URL for IDV
+# Profile Management
+GET    /api/users/me                   → Get my profile
+PATCH  /api/users/me                   → Update my profile
+DELETE /api/users/me                   → Delete account
 
-POST   /api/advances                          → Create draft advance
-GET    /api/advances                          → List user's advances
-GET    /api/advances/:id                      → Get advance details + status
-POST   /api/advances/:id/documents            → Upload supporting document
-DELETE /api/advances/:id/documents/:docId     → Remove document
-POST   /api/advances/:id/submit               → Submit for validation (calls Validation Service)
-POST   /api/advances/:id/accept-counter-offer → Accept counter-offer terms
-POST   /api/advances/:id/withdraw             → User cancels request
+# Notifications
+GET    /api/notifications              → List my notifications
+PATCH  /api/notifications/:id/read     → Mark as read
+POST   /api/notifications/read-all     → Mark all as read
 ```
 
-### Admin Endpoints
+---
+
+### Applicant (Borrower) Endpoints
 
 ```
-GET    /api/admin/advances/pending-review     → List advances needing manual review
-POST   /api/admin/advances/:id/approve        → Calls Validation Service
-POST   /api/admin/advances/:id/reject         → Calls Validation Service
+# Advance Request Management
+POST   /api/advances                      → Create advance request (draft)
+GET    /api/advances/my-requests          → List my advance requests
+GET    /api/advances/:id                  → Get advance details + status
+PATCH  /api/advances/:id                  → Update draft advance request
+DELETE /api/advances/:id                  → Cancel/withdraw advance request
+
+# Supporting Documents
+POST   /api/advances/:id/documents        → Upload supporting document
+DELETE /api/advances/:id/documents/:docId → Remove document
+
+# Submission
+POST   /api/advances/:id/submit           → Submit for review (→ calls Validation Service)
+POST   /api/advances/:id/accept-counter   → Accept counter-offer terms
+
+# Receiving Funds
+GET    /api/advances/:id/funding-status   → Check funding progress
+POST   /api/advances/:id/confirm-receipt  → Confirm funds received
+
+# Repayments
+GET    /api/advances/:id/repayments       → View repayment schedule
+POST   /api/advances/:id/repayments/:repaymentId/pay → Make a repayment
+GET    /api/advances/:id/repayment-history → View payment history
 ```
+
+**Advance Status Flow (Applicant perspective):**
+```
+Draft → Submitted → UnderReview → Approved/Rejected → SeekingFunding → Funded → Repaying → Repaid
+```
+
+---
+
+### Supporter (Donor) Endpoints
+
+```
+# Browse Advance Requests
+GET    /api/advances/available         → List approved advances seeking funding
+GET    /api/advances/:id               → View advance details (public info)
+
+# Donate / Support
+POST   /api/advances/:id/support       → Pledge support (full or partial amount)
+DELETE /api/advances/:id/support/:supportId → Cancel my pledge (before confirmed)
+POST   /api/advances/:id/support/:supportId/confirm → Confirm funds transferred
+
+# My Donations Dashboard
+GET    /api/my-supports                → List all advances I'm supporting
+GET    /api/my-supports/active         → Currently active (not yet repaid)
+GET    /api/my-supports/completed      → Fully repaid advances
+GET    /api/my-supports/stats          → Total donated, total returned, etc.
+
+# Repayment Tracking
+GET    /api/my-supports/:supportId/repayments → View repayment status for this advance
+GET    /api/my-returns                 → All repayment distributions I've received
+```
+
+---
+
+### Platform Admin Endpoints
+
+```
+# User Management
+GET    /api/admin/users                → List all users
+GET    /api/admin/users/:id            → View user details
+POST   /api/admin/users/:id/verify     → Mark user as verified
+POST   /api/admin/users/:id/suspend    → Suspend user account
+POST   /api/admin/users/:id/unsuspend  → Reactivate user
+
+# Advance Management
+GET    /api/admin/advances             → List all advances (with filters)
+GET    /api/admin/advances/pending-review → Advances awaiting admin review
+GET    /api/admin/advances/:id         → View full advance details + audit log
+
+# Advance Verification & Approval
+POST   /api/admin/advances/:id/verify  → Mark documents as verified
+POST   /api/admin/advances/:id/approve → Approve advance (→ calls Validation Service)
+POST   /api/admin/advances/:id/reject  → Reject advance with reason
+POST   /api/admin/advances/:id/request-info → Request more info from applicant
+
+# Fund Release
+GET    /api/admin/advances/ready-to-release → Fully funded, pending release
+POST   /api/admin/advances/:id/release → Release funds to applicant
+
+# Repayment Verification
+GET    /api/admin/repayments/pending   → Repayments pending verification
+POST   /api/admin/repayments/:id/verify → Verify repayment received
+
+# Advertisements (optional - if admin creates featured listings)
+POST   /api/admin/advertisements       → Create donation advertisement
+GET    /api/admin/advertisements       → List all ads
+PATCH  /api/admin/advertisements/:id   → Update ad
+DELETE /api/admin/advertisements/:id   → Remove ad
+
+# Notifications (Broadcast)
+POST   /api/admin/notifications/broadcast → Notify all supporters of new advance
+POST   /api/admin/notifications/send   → Send notification to specific user
+
+# Platform Stats
+GET    /api/admin/stats                → Dashboard stats (total advances, amounts, etc.)
+GET    /api/admin/stats/advances       → Advance statistics
+GET    /api/admin/stats/users          → User statistics
+```
+
+---
+
+### Which Endpoints Call Validation Service?
+
+| Endpoint | Calls Validation? | Purpose |
+|----------|-------------------|---------|
+| `POST /api/advances/:id/submit` | **YES** | Applicant submits advance for review |
+| `POST /api/admin/advances/:id/approve` | **YES** | Admin final approval (after manual review) |
+| `POST /api/admin/advances/:id/reject` | **YES** | Admin rejection (logs to audit) |
+
+All other endpoints are handled entirely by Django.
 
 ### Internal: Calling Validation Service
 
@@ -412,3 +625,11 @@ services:
 - [ ] Which IDV provider? (Onfido vs Sumsub)
 - [ ] Notification system for status changes?
 - [ ] Rate limiting per user?
+
+### P2P Funding Questions
+- [ ] **Escrow handling** - Do supporters transfer to platform wallet, or direct to borrower?
+- [ ] **Partial funding** - Can borrower accept partial funding (e.g., £400 of £600 requested)?
+- [ ] **Funding timeout** - How long can an advance stay in 'seeking' before expiring?
+- [ ] **Supporter limits** - Max supporters per advance? Min/max pledge amount?
+- [ ] **Supporter verification** - Do supporters need IDV/bank link too?
+- [ ] **Late repayments** - How to handle missed payments? Grace period?
