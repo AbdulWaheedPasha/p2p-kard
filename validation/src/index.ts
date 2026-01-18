@@ -1,77 +1,100 @@
 import express from 'express';
+import { ValidationEngine } from './engine/index.js';
+import type { ValidationRequest } from './types/index.js';
+import { ValidationConfig } from './config/validation.config.js';
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+// Initialize validation engine
+const validationEngine = new ValidationEngine();
+
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: '1.0.0' });
+  res.json({ status: 'ok', version: ValidationConfig.modelVersion });
 });
 
-// Main validation endpoint - skeleton that returns mock response
-app.post('/api/v1/validate', (req, res) => {
-  const { advanceId, userId, amount, termMonths } = req.body;
+// Main validation endpoint
+app.post('/api/v1/validate', async (req, res) => {
+  try {
+    const request = req.body as ValidationRequest;
 
-  // TODO: Replace with actual validation logic
-  // For now, return a mock "approved" response so Django can integrate
+    console.log(`[VALIDATE] advanceId=${request.advanceId} userId=${request.userId} amount=${request.amount}`);
 
-  const mockResponse = {
-    decision: 'PASS',
-    newStatus: 'Approved',
-    requiredActions: [],
-    counterOffer: null,
-    affordability: {
-      monthlyNetIncome: 250000,
-      disposableIncome: 85000,
-      proposedRepayment: Math.round(amount / termMonths),
-      meetsAffordability: true,
-      maxAffordableAmount: amount,
-      flags: [],
-    },
-    risk: {
-      score: 25,
-      reasons: [],
-      modelVersion: '1.0.0',
-    },
-    auditEntries: [
-      {
-        timestamp: new Date().toISOString(),
-        stage: 'validation',
-        validator: 'MockValidator',
-        decision: 'PASS',
-        reasons: ['mock_validation_passed'],
-        data: { advanceId, userId, amount, termMonths },
+    const result = await validationEngine.validate(request);
+
+    console.log(`[VALIDATE] advanceId=${request.advanceId} → ${result.decision} (risk: ${result.risk.score})`);
+
+    res.json(result);
+  } catch (error) {
+    console.error('[VALIDATE] Error:', error);
+    res.status(500).json({
+      error: 'Validation failed',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// Quick eligibility check
+app.post('/api/v1/check-eligibility', async (req, res) => {
+  try {
+    const { amount, termMonths, bankLinkToken } = req.body;
+
+    // Create a minimal request for eligibility check
+    const request: ValidationRequest = {
+      advanceId: 'eligibility-check',
+      userId: 'eligibility-check',
+      amount: amount || 0,
+      currency: 'GBP',
+      termMonths: termMonths || 6,
+      purposeCategory: 'other',
+      payoutMethod: 'bank_transfer',
+      user: {
+        emailVerified: true,
+        hasActiveAdvance: false,
+        accountAgeDays: 30,
       },
-    ],
-  };
+      evidence: {
+        documents: [],
+        bankLinkStatus: bankLinkToken ? 'connected' : 'not_linked',
+        bankLinkToken,
+        idvStatus: 'verified',
+      },
+    };
 
-  console.log(`[VALIDATE] advanceId=${advanceId} amount=${amount} → ${mockResponse.decision}`);
-  res.json(mockResponse);
+    const result = await validationEngine.validate(request);
+
+    res.json({
+      eligible: result.decision === 'PASS' || result.decision === 'COUNTER_OFFER',
+      maxAmount: result.affordability?.maxAffordableAmount || amount,
+      suggestedTermMonths: result.affordability?.suggestedTermMonths || termMonths,
+      flags: result.affordability?.flags || [],
+    });
+  } catch (error) {
+    console.error('[ELIGIBILITY] Error:', error);
+    res.status(500).json({
+      error: 'Eligibility check failed',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 });
 
-// Quick eligibility check - skeleton
-app.post('/api/v1/check-eligibility', (req, res) => {
-  const { amount } = req.body;
-
-  // TODO: Replace with actual eligibility logic
-  res.json({
-    eligible: true,
-    maxAmount: amount,
-    suggestedTermMonths: 6,
-    flags: [],
-  });
-});
-
-// Admin approve - skeleton
+// Admin approve
 app.post('/api/v1/admin/approve', (req, res) => {
   const { advanceId, reviewerId, notes } = req.body;
 
-  // TODO: Replace with actual approval logic
+  // Admin approval bypasses automated checks
   res.json({
     decision: 'PASS',
     newStatus: 'Approved',
+    requiredActions: [],
+    risk: {
+      score: 0,
+      reasons: ['admin_approved'],
+      modelVersion: ValidationConfig.modelVersion,
+    },
     auditEntries: [
       {
         timestamp: new Date().toISOString(),
@@ -79,28 +102,33 @@ app.post('/api/v1/admin/approve', (req, res) => {
         validator: 'AdminReview',
         decision: 'PASS',
         reasons: ['manually_approved'],
-        data: { reviewerId, notes },
+        data: { reviewerId, notes, advanceId },
       },
     ],
   });
 });
 
-// Admin reject - skeleton
+// Admin reject
 app.post('/api/v1/admin/reject', (req, res) => {
   const { advanceId, reviewerId, reason } = req.body;
 
-  // TODO: Replace with actual rejection logic
   res.json({
     decision: 'DECLINE',
-    newStatus: 'Closed',
+    newStatus: 'Rejected',
+    requiredActions: [],
+    risk: {
+      score: 100,
+      reasons: ['admin_rejected'],
+      modelVersion: ValidationConfig.modelVersion,
+    },
     auditEntries: [
       {
         timestamp: new Date().toISOString(),
         stage: 'manual_review',
         validator: 'AdminReview',
         decision: 'DECLINE',
-        reasons: [reason],
-        data: { reviewerId },
+        reasons: [reason || 'Rejected by admin'],
+        data: { reviewerId, advanceId },
       },
     ],
   });
@@ -108,6 +136,7 @@ app.post('/api/v1/admin/reject', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Validation service running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`Version: ${ValidationConfig.modelVersion}`);
+  console.log(`Health: http://localhost:${PORT}/health`);
   console.log(`Validate: POST http://localhost:${PORT}/api/v1/validate`);
 });
