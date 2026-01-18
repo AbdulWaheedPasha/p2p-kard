@@ -1,0 +1,249 @@
+{
+  "info": {
+    "name": "P2P Kardh API v1",
+    "_postman_id": "7b4c0d4c-7f63-4b0a-9c9b-6b1ce9c4f1f0",
+    "description": "Postman collection for P2P Kardh API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "Auth Register",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"email\":\"user@example.com\",\"password\":\"StrongPass123\",\"name\":\"User\"}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/register"
+      }
+    },
+    {
+      "name": "Auth Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"email\":\"user@example.com\",\"password\":\"StrongPass123\"}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/login"
+      }
+    },
+    {
+      "name": "Auth Logout",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/auth/logout"
+      }
+    },
+    {
+      "name": "Me",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/me"
+      }
+    },
+    {
+      "name": "Home",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/home"
+      }
+    },
+    {
+      "name": "Campaign Detail",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/v1/campaigns/{{campaignId}}"
+      }
+    },
+    {
+      "name": "Dashboard",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/dashboard"
+      }
+    },
+    {
+      "name": "Borrow Request Create",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"title\":\"Rent\",\"category\":\"rent\",\"reasonDetailed\":\"Details\",\"amountRequestedCents\":50000,\"currency\":\"EUR\",\"expectedReturnDays\":60}"
+        },
+        "url": "{{baseUrl}}/api/v1/borrow-requests"
+      }
+    },
+    {
+      "name": "Borrow Request Presign",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"files\":[{\"fileName\":\"doc.pdf\",\"contentType\":\"application/pdf\"}]}"
+        },
+        "url": "{{baseUrl}}/api/v1/borrow-requests/{{borrowRequestId}}/documents/presign"
+      }
+    },
+    {
+      "name": "Borrow Request Confirm",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"documentIds\":[\"doc_uuid\"]}"
+        },
+        "url": "{{baseUrl}}/api/v1/borrow-requests/{{borrowRequestId}}/documents/confirm"
+      }
+    },
+    {
+      "name": "Support Checkout",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"amountCents\":5000,\"currency\":\"EUR\",\"returnUrl\":\"https://example.com/return\",\"cancelUrl\":\"https://example.com/cancel\"}"
+        },
+        "url": "{{baseUrl}}/api/v1/campaigns/{{campaignId}}/support/checkout"
+      }
+    },
+    {
+      "name": "Admin Borrow Requests",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/admin/borrow-requests?status=SUBMITTED"
+      }
+    },
+    {
+      "name": "Admin Borrow Request Detail",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/admin/borrow-requests/{{borrowRequestId}}"
+      }
+    },
+    {
+      "name": "Admin Decision",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"decision\":\"VERIFY\",\"noteInternal\":\"ok\"}"
+        },
+        "url": "{{baseUrl}}/api/v1/admin/borrow-requests/{{borrowRequestId}}/decision"
+      }
+    },
+    {
+      "name": "Admin Create Campaign",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"titlePublic\":\"Campaign\",\"storyPublic\":\"Story\",\"termsPublic\":\"Terms\",\"amountNeededCents\":50000,\"expectedReturnDays\":60,\"category\":\"rent\"}"
+        },
+        "url": "{{baseUrl}}/api/v1/admin/borrow-requests/{{borrowRequestId}}/create-campaign"
+      }
+    },
+    {
+      "name": "Repayments Setup",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"borrowRequestId\":\"br_uuid\",\"provider\":\"stripe\",\"returnUrl\":\"https://example.com/return\"}"
+        },
+        "url": "{{baseUrl}}/api/v1/repayments/setup"
+      }
+    },
+    {
+      "name": "Repayments Pay",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"borrowRequestId\":\"br_uuid\",\"amountCents\":5000,\"currency\":\"EUR\"}"
+        },
+        "url": "{{baseUrl}}/api/v1/repayments/pay"
+      }
+    },
+    {
+      "name": "Repayments Mine",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/repayments/mine"
+      }
+    }
+  ]
+}
