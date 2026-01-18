@@ -23,12 +23,6 @@ export class PreconditionValidator {
       // No action - they need to repay existing first
     }
 
-    // Check account age
-    if (request.user.accountAgeDays < ValidationConfig.user.minAccountAgeDays) {
-      reasons.push('account_too_new');
-      // No action - just need to wait
-    }
-
     // Check amount limits
     if (request.amount < ValidationConfig.limits.minAmount) {
       reasons.push('amount_below_minimum');

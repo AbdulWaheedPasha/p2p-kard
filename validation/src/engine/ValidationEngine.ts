@@ -128,12 +128,6 @@ export class ValidationEngine {
     // Stage 4: Risk Assessment & Final Decision
     // ============================================
 
-    // Add account age risk
-    if (request.user.accountAgeDays < 30) {
-      riskScore += ValidationConfig.risk.factors.shortAccountAge;
-      riskReasons.push('short_account_age');
-    }
-
     // Determine final decision based on risk score
     let finalDecision: Decision;
     let newStatus: ValidationResult['newStatus'];

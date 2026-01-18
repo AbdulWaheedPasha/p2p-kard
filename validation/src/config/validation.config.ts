@@ -82,7 +82,6 @@ export const ValidationConfig = {
   // User Account Requirements
   // ============================================
   user: {
-    minAccountAgeDays: 7,           // Account must be at least 7 days old
     requireEmailVerified: true,
     requireIdvVerified: true,
     requireBankLinked: true,
@@ -101,11 +100,10 @@ export const ValidationConfig = {
 
     // Points added for various risk factors
     factors: {
-      shortAccountAge: 10,       // Account < 30 days
       noDocuments: 15,           // No supporting docs uploaded
       highVolatility: 20,        // Income volatility > medium
-      frequentOverdraft: 25,     // > 5 negative days in period
-      lowBuffer: 15,             // Buffer close to minimum
+      frequentOverdraft: 15,     // > 5 negative days in period
+      lowBuffer: 10,             // Buffer close to minimum
       largeAmount: 10,           // Amount > £1000
       shortTerm: 5,              // Term < 3 months
     },
